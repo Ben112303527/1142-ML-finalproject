@@ -7,116 +7,107 @@ Original file is located at
     https://colab.research.google.com/drive/1_oR7qKFFY2_F_v-OhsfnTZ7Ess4TyTkg
 """
 
-# 安裝套件 + 授權
-!pip install gspread oauth2client pandas --quiet
+# ① 安裝套件 + 授權
+!pip install gspread google-auth
 from google.colab import auth
 auth.authenticate_user()
 import gspread
 from google.auth import default
-import pandas as pd
 
 # 連接Google Sheets
 creds, _ = default()
 gc = gspread.authorize(creds)
-SHEET_ID = "1-pDPG2b4HJR9C8X6YGaflROWTq2ZqgSvN5jKaoQ5crU"
-sh = gc.open_by_key(SHEET_ID)
+sheet_id = "1-pDPG2b4HJR9C8X6YGaflROWTq2ZqgSvN5jKaoQ5crU"
+sh = gc.open_by_key(sheet_id)
+ws = sh.get_worksheet(0)
+
+# 建立庫存資料
+inventory = {
+    "馬達": {
+        "IG-32PGM": 5,
+        "IG-36PGM": 2,
+        "IG-40PGM": 4,
+        "RB-37GM": 4,
+        "RB-40GM": 2,
+        "TT motor": 10
+    },
+    "電控": {
+        "Arduino Nano": 5,
+        "Arduino UNO": 4,
+        "Arduino Mega": 2,
+        "ESP32": 6,
+        "Jetson Orin": 0,
+        "Jetson Nano": 1
+    }
+}
+
+# parse
+def parse(text):
+    parts = text.split("-")
+
+    if len(parts) < 3:
+        raise ValueError(f"❌ 格式錯誤：{text}")
+
+    cat = parts[0].strip()
+    qty = int(parts[-1])
+    item = "-".join(parts[1:-1]).strip()
+
+    return cat, item, qty
 
 
-# 自動抓Form回應Sheet
-def get_form_sheet(sh):
-    for ws in sh.worksheets():
-        title = ws.title.lower()
-        if "form" in title and "response" in title:
-            return ws
-    return sh.get_worksheet(0)
+# update
+def update(inv, action, cat, item, qty):
 
-form_sheet = get_form_sheet(sh)
+    if cat not in inv:
+        return inv
 
+    if item not in inv[cat]:
+        return inv
 
-# 讀資料
-data = form_sheet.get_all_records()
-df = pd.DataFrame(data)
+    if action == "借出零件":
+        inv[cat][item] -= qty
 
-df.columns = [c.strip() for c in df.columns]
+    elif action in ["歸還零件", "上架零件"]:
+        inv[cat][item] += qty
 
+    elif action == "報廢零件":
+        inv[cat][item] -= qty
 
-# 找欄位
-def find_combined_col(df):
-    for c in df.columns:
-        if "異動" in c or "項目" in c:
-            return c
-    return None
+    return inv
 
-combined_col = find_combined_col(df)
+# 讀取資料
+data = ws.get_all_values()
 
-if combined_col is None:
-    raise ValueError("❌ 找不到合併欄位（類型-品項-數量）")
+for row in data[1:]:
+    if len(row) < 3:
+        continue
 
-print("使用欄位：", combined_col)
+    action = row[1]
+    text = row[2]
 
-# split
-def parse_item(text):
-    parts = str(text).split("-")
+    try:
+        cat, item, qty = parse(text)
+        inventory = update(inventory, action, cat, item, qty)
 
-    if len(parts) != 3:
-        raise ValueError(f"❌ 格式錯誤：{text}（應為 類型-品項-數量）")
+    except:
+        pass
 
-    action = parts[0].strip()
-    item = parts[1].strip()
-    qty_str = parts[2].strip()
+# 轉文字
+def to_text(inv):
+    text = "📦 倉儲狀態\n\n"
 
-    if not qty_str.isdigit():
-        raise ValueError(f"❌ 數量不是數字：{qty_str}")
+    for cat, items in inv.items():
+        text += cat + "\n"
 
-    qty = int(qty_str)
+        for k, v in items.items():
+            text += f"{k} (剩餘：{v})\n"
 
-    return action, item, qty
+        text += "\n"
 
+    return text
 
-# 解析資料
-parsed = df[combined_col].apply(parse_item)
-df["異動類別"] = parsed.apply(lambda x: x[0])
-df["品項"] = parsed.apply(lambda x: x[1])
-df["數量"] = parsed.apply(lambda x: x[2])
+result = to_text(inventory)
 
-# 庫存計算
-def convert(row):
-    if row["異動類別"] in ["歸還", "上架"]:
-        return row["數量"]
-    elif row["異動類別"] in ["借出", "報廢"]:
-        return -row["數量"]
-    else:
-        return 0
-
-df["signed_qty"] = df.apply(convert, axis=1)
-
-
-# 計算庫存
-inventory = df.groupby("品項")["signed_qty"].sum().reset_index()
-inventory.columns = ["品項", "目前庫存"]
-inventory = inventory.sort_values("品項")
-
-# 寫回Inventory Sheet
-try:
-    inv_sheet = sh.worksheet("Inventory")
-except:
-    inv_sheet = sh.add_worksheet(title="Inventory", rows=100, cols=10)
-
-inv_sheet.clear()
-
-inv_sheet.update(
-    [inventory.columns.tolist()] + inventory.values.tolist()
-)
-
-
-# 輸出結果
-print("✔ 更新完成")
-
-print("\n📦 庫存：")
-display(inventory)
-
-print("\n⚠️ 庫存異常：")
-display(inventory[inventory["目前庫存"] < 0])
-
-print("\n📌 最近 10 筆紀錄：")
-display(df.tail(10))
+# 寫回 E1
+ws.update("E1", [[result]])
+print("✅ 完成更新 E1")
