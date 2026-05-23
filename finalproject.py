@@ -7,7 +7,7 @@ Original file is located at
     https://colab.research.google.com/drive/1_oR7qKFFY2_F_v-OhsfnTZ7Ess4TyTkg
 """
 
-# ① 安裝套件 + 授權
+# 安裝套件 + 授權
 !pip install gspread google-auth
 from google.colab import auth
 auth.authenticate_user()
@@ -59,19 +59,37 @@ def parse(text):
 def update(inv, action, cat, item, qty):
 
     if cat not in inv:
-        return inv
-
-    if item not in inv[cat]:
-        return inv
+        inv[cat] = {}
 
     if action == "借出零件":
-        inv[cat][item] -= qty
+        if item in inv[cat]:
+            if inv[cat][item] - qty >= 0:
+                inv[cat][item] -= qty
+            else:
+                print(f"⚠️ 借出失敗：{item} 庫存不足")
+        else:
+            print(f"⚠️ 品項不存在：{item}")
 
-    elif action in ["歸還零件", "上架零件"]:
-        inv[cat][item] += qty
+    elif action == "歸還零件":
+        if item in inv[cat]:
+            inv[cat][item] += qty
+        else:
+            print(f"⚠️ 歸還失敗：{item} 不存在")
+
+    elif action == "上架零件":
+        if item in inv[cat]:
+            inv[cat][item] += qty
+        else:
+            inv[cat][item] = qty
 
     elif action == "報廢零件":
-        inv[cat][item] -= qty
+        if item in inv[cat]:
+            if inv[cat][item] - qty >= 0:
+                inv[cat][item] -= qty
+            else:
+                print(f"⚠️ 報廢失敗：{item} 庫存不足")
+        else:
+            print(f"⚠️ 品項不存在：{item}")
 
     return inv
 
